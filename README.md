@@ -4,14 +4,14 @@ Search a product catalog with natural language ("black leather office chair") or
 CLIP is fine-tuned on Amazon Berkeley Objects (ABO) product listings. The fine-tuned image encoder embeds the whole catalog into a FAISS index, and a FastAPI service in Docker serves it, with artifacts stored in S3.
 
 ```
-                 ┌───────────── offline (GPU) ─────────────┐        ┌──────── online (CPU, Docker) ────────┐
+                 ┌───────────── offline (GPU) ─────────────┐        ┌──────── online (CPU, Docker) ──────-──┐
 ABO listings ──► prepare_abo.py ──► train.py (InfoNCE)     │        │  GET  /search?q=...  ─► text encoder ─┐
-ABO images        (item-level split)   │  zero-shot vs      │        │  POST /search_by_image ─► img encoder ┤
-                                       │  fine-tuned R@K    │        │                                      ▼
-                                       ▼                    │  S3    │                       FAISS (flat / IVF-PQ)
-                         build_index.py: embed catalog ─────┼──────► │                                      ▼
-                         → index.faiss + meta.parquet       │        │                        top-k products + scores
-                 └──────────────────────────────────────────┘        └──────────────────────────────────────┘
+ABO images        (item-level split)   │  zero-shot vs     │        │  POST /search_by_image ─► img encoder ┤
+                                       │  fine-tuned R@K   │        │                                       ▼
+                                       ▼                   │  S3    │                             FAISS (flat / IVF-PQ)
+                         build_index.py: embed catalog ────┼──────► │                                       ▼
+                         → index.faiss + meta.parquet      │        │                            top-k products + scores
+                 └─────────────────────────────────────────┘        └──────────────────────────────────────┘
 ```
 
 | Piece | What it shows |
