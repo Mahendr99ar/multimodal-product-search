@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product Search — CLIP in your browser</title>
+<meta name="description" content="Search 121,549 Amazon products by describing them or by showing a photo. Fine-tuned CLIP embeddings with a FAISS index.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --page:#EEF2F0; --surface:#FFFFFF; --ink:#0E3B43; --muted:#5B6B6E; --line:#D3DCD9;
+  --accent:#F2A93B; --accent-ink:#5A3A00; --photo:#FFFFFF; --danger:#B3261E;
+  --display:"Bricolage Grotesque", "Trebuchet MS", sans-serif;
+  --body:"Instrument Sans", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --page:#0F1E21; --surface:#16292D; --ink:#E6EEEC; --muted:#9DB0AE; --line:#2A4247;
+         --accent:#F2A93B; --accent-ink:#2B1B00; --photo:#F4F6F5; --danger:#F2B8B5; }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--ink);font:400 16px/1.55 var(--body)}
+a{color:inherit}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:6px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+
+/* masthead */
+.top{display:flex;justify-content:space-between;align-items:center;padding:18px 0}
+.mark{font:700 18px/1 var(--display);letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+.mark i{width:22px;height:22px;border-radius:6px;background:var(--ink);display:inline-grid;place-items:center}
+.mark i::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.top nav{display:flex;gap:18px;font-size:15px}
+.top nav a{color:var(--muted);text-decoration:none}
+.top nav a:hover{color:var(--ink);text-decoration:underline}
+
+/* the query is the hero */
+.hero{padding:36px 0 10px}
+.hero p.lede{margin:0 0 18px;color:var(--muted);max-width:60ch}
+.modes{display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px;margin-bottom:14px}
+.modes button{border:0;background:none;color:var(--muted);font:500 15px var(--body);padding:8px 16px;border-radius:999px;cursor:pointer}
+.modes button[aria-pressed="true"]{background:var(--ink);color:var(--page)}
+form.q{display:flex;align-items:flex-end;gap:14px;border-bottom:3px solid var(--ink);padding-bottom:6px}
+form.q input{flex:1;min-width:0;border:0;background:transparent;color:var(--ink);
+  font:700 clamp(30px,5.2vw,58px)/1.1 var(--display);letter-spacing:-.025em;padding:4px 0}
+form.q input::placeholder{color:var(--muted);opacity:.55}
+form.q input:focus{outline:none}
+form.q:focus-within{border-bottom-color:var(--accent)}
+.go{flex:none;border:0;border-radius:12px;background:var(--accent);color:var(--accent-ink);
+  font:600 16px var(--body);padding:12px 20px;cursor:pointer;margin-bottom:6px}
+.go:hover{filter:brightness(1.05)}
+.tries{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 0;padding:0;list-style:none}
+.tries button{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;
+  font:500 14px var(--body);padding:6px 12px;cursor:pointer}
+.tries button:hover{border-color:var(--ink)}
+
+/* photo mode */
+.drop{display:none;border:2px dashed var(--line);border-radius:16px;background:var(--surface);padding:26px;
+  align-items:center;gap:20px;cursor:pointer;min-height:132px}
+.drop.on{display:flex}
+.drop.over{border-color:var(--accent)}
+.drop img{width:96px;height:96px;object-fit:contain;background:var(--photo);border-radius:10px;display:none}
+.drop img.has{display:block}
+.drop strong{font:700 22px/1.2 var(--display);display:block;margin-bottom:4px}
+.drop span{color:var(--muted);font-size:15px}
+
+/* status + results */
+.status{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin:30px 0 14px;min-height:28px}
+.status h2{margin:0;font:700 22px/1.25 var(--display);letter-spacing:-.01em}
+.status .speed{color:var(--muted);font-size:15px}
+.status .speed b{color:var(--ink);font-weight:600}
+.source{display:flex;align-items:center;gap:10px}
+.source img{width:40px;height:40px;object-fit:contain;background:var(--photo);border-radius:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;padding:0;margin:0;list-style:none}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.card .ph{aspect-ratio:1/1;background:var(--photo);display:grid;place-items:center;position:relative}
+.card .ph img{width:86%;height:86%;object-fit:contain}
+.card .ph .rank{position:absolute;top:8px;left:8px;background:var(--ink);color:var(--page);font:600 12px var(--body);
+  border-radius:6px;padding:2px 7px}
+.card .ph .none{font:700 40px var(--display);color:#9AA9A7}
+.card .body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}
+.card h3{margin:0;font:600 15px/1.35 var(--body);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .brand{color:var(--muted);font-size:13px;line-height:1.3}
+.match{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-top:auto}
+.match .bar{flex:1;height:5px;border-radius:5px;background:var(--line);overflow:hidden}
+.match .bar i{display:block;height:100%;background:var(--accent);border-radius:5px}
+.more{align-self:flex-start;border:0;background:none;padding:2px 0;color:var(--ink);font:600 14px var(--body);
+  text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.more:hover{color:var(--muted)}
+.msg{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;color:var(--muted)}
+.msg.err{color:var(--danger)}
+.skel .ph{background:linear-gradient(90deg,var(--surface),var(--page),var(--surface));background-size:200% 100%;animation:sh 1.2s infinite}
+@keyframes sh{to{background-position:-200% 0}}
+
+/* how it works */
+.how{margin:64px 0 0;padding:40px 0 56px;border-top:1px solid var(--line);display:grid;grid-template-columns:1.1fr .9fr;gap:48px}
+.how h2{font:700 28px/1.2 var(--display);letter-spacing:-.015em;margin:0 0 18px}
+.how ol{margin:0;padding:0;list-style:none;counter-reset:s}
+.how li{counter-increment:s;display:grid;grid-template-columns:34px 1fr;gap:12px;margin-bottom:18px;max-width:58ch}
+.how li::before{content:counter(s);width:28px;height:28px;border-radius:50%;border:2px solid var(--ink);
+  display:grid;place-items:center;font:700 14px var(--display)}
+.how li b{display:block}
+.how li span{color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:15px;background:var(--surface);border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
+th{font-weight:600;color:var(--muted);font-size:13px}
+td.n{font-variant-numeric:tabular-nums}
+td.up{font-weight:700}
+tr:last-child td{border-bottom:0}
+.note{color:var(--muted);font-size:14px;margin:12px 0 0}
+footer{color:var(--muted);font-size:14px;padding:0 0 32px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+.boot{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted);margin:0 0 18px;min-height:22px}
+.boot .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);flex:none;animation:pulse 1s infinite alternate}
+.boot.ready .dot{background:#2E9E6A;animation:none}
+.boot.err{color:var(--danger)}
+.boot .pbar{width:140px;height:5px;border-radius:5px;background:var(--line);overflow:hidden;flex:none}
+.boot.ready .pbar{display:none}
+.boot .pbar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+@keyframes pulse{to{opacity:.35}}
+@media (max-width:760px){
+  .how{grid-template-columns:1fr;gap:32px}
+  form.q{flex-direction:column;align-items:stretch;border-bottom:0;gap:10px}
+  form.q input{border-bottom:3px solid var(--ink);padding-bottom:8px}
+  .go{margin:0}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .top nav a.hide-sm{display:none}
+}
+@media (prefers-reduced-motion:reduce){.skel .ph,.boot .dot{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="mark"><i aria-hidden="true"></i>Product Search</div>
+    <nav>
+      <a href="#how">How it works</a>
+      <a class="hide-sm" href="#" id="model-link" target="_blank" rel="noopener">Model</a>
+      <a href="https://github.com/Mahendr99ar/multimodal-product-search" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="lede">Describe a product in your own words, or show a photo. The model finds the closest matches among 121,549 real Amazon listings. Everything runs <b>inside your browser</b>: no server, nothing you type or upload leaves your device.</p>
+      <div class="boot" id="boot" role="status"><span class="dot"></span><span id="boot-text">Starting…</span><span class="pbar"><i id="boot-bar"></i></span></div>
+
+      <div class="modes" role="group" aria-label="Search by">
+        <button type="button" id="m-text" aria-pressed="true">Describe it</button>
+        <button type="button" id="m-photo" aria-pressed="false">Use a photo</button>
+      </div>
+
+      <form class="q" id="qform" role="search">
+        <label for="q" class="sr">Describe the product</label>
+        <input id="q" name="q" type="search" autocomplete="off" placeholder="a blue ceramic coffee mug" maxlength="200">
+        <button class="go" type="submit">Search</button>
+      </form>
+
+      <label class="drop" id="drop" tabindex="0">
+        <input type="file" id="file" accept="image/*" hidden>
+        <img id="preview" alt="Your photo">
+        <div><strong>Drop a product photo here</strong><span>or click to choose one. You can also paste an image. JPG or PNG, up to 10 MB.</span></div>
+      </label>
+
+      <ul class="tries" id="tries" aria-label="Example searches">
+        <li><button type="button">black leather office chair</button></li>
+        <li><button type="button">running shoes for women</button></li>
+        <li><button type="button">wooden bookshelf with five shelves</button></li>
+        <li><button type="button">stainless steel water bottle</button></li>
+        <li><button type="button">phone case for iPhone</button></li>
+        <li><button type="button">rug with geometric pattern</button></li>
+      </ul>
+    </section>
+
+    <section aria-live="polite">
+      <div class="status" id="status"></div>
+      <ul class="grid" id="grid"></ul>
+    </section>
+
+    <section class="how" id="how">
+      <div>
+        <h2>How it works</h2>
+        <ol>
+          <li><div><b>Your words or photo become a vector.</b><span>A CLIP model turns text and images into 512 numbers that live in the same space, so "red sneaker" and a photo of one land close together.</span></div></li>
+          <li><div><b>The model was fine-tuned on Amazon listings.</b><span>Trained with a contrastive loss on 109,395 product photo–title pairs from the Amazon Berkeley Objects dataset, so it learned how products are actually described.</span></div></li>
+          <li><div><b>FAISS finds the nearest products.</b><span>Every catalog photo is pre-embedded into a compressed IVF-PQ index. A query is compared against all 121,549 products in milliseconds.</span></div></li>
+          <li><div><b>It all runs in your browser.</b><span>The CLIP encoders are exported to ONNX and quantized to INT8, then run with ONNX Runtime Web (WebAssembly). The IVF-PQ index ships as ~6 MB of plain arrays and is scanned exhaustively in JavaScript. The same model is also served as a Dockerised FastAPI API on AWS EC2.</span></div></li>
+        </ol>
+      </div>
+      <div>
+        <h2>Results</h2>
+        <table>
+          <caption class="sr">Retrieval accuracy on 6,077 held-out products</caption>
+          <thead><tr><th scope="col">Text → image, held-out test</th><th scope="col">Before fine-tuning</th><th scope="col">After</th></tr></thead>
+          <tbody>
+            <tr><td>Recall@1</td><td class="n">41.6%</td><td class="n up">82.4%</td></tr>
+            <tr><td>Recall@5</td><td class="n">65.8%</td><td class="n up">96.2%</td></tr>
+            <tr><td>Recall@10</td><td class="n">74.2%</td><td class="n up">98.0%</td></tr>
+            <tr><td>API latency, p95 (AWS EC2)</td><td class="n" colspan="2">79 ms on 2 CPU cores</td></tr>
+            <tr><td>Search in this browser</td><td class="n" colspan="2" id="live-ms">measured on your first search</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Recall@1 is how often the exact product described is the first result, measured on 6,077 products the model never saw in training.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>Built by Mahendra Meena. Product data and photos: Amazon Berkeley Objects (CC BY 4.0).</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+<script>
+/* ---------- in-browser search engine: CLIP (ONNX INT8) + IVF-PQ scan ---------- */
+const ORT_DIST = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+const E = window.__engine = {};
+
+async function fetchBuf(url, onProgress){
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not download ${url.split("/").pop()} (error ${res.status}).`);
+  const total = +res.headers.get("content-length") || 0;
+  if (!onProgress || !res.body || !total) return new Uint8Array(await res.arrayBuffer());
+  const out = new Uint8Array(total), reader = res.body.getReader();
+  let got = 0;
+  for (;;){
+    const {done, value} = await reader.read();
+    if (done) break;
+    if (got + value.length > out.length) { // content-length was compressed size
+      const bigger = new Uint8Array(Math.max(out.length * 2, got + value.length)); bigger.set(out.subarray(0, got));
+      return finishGrow(reader, bigger, got, value, onProgress, total);
+    }
+    out.set(value, got); got += value.length; onProgress(got / total);
+  }
+  return got === out.length ? out : out.slice(0, got);
+}
+async function finishGrow(reader, buf, got, value, onProgress, total){
+  const parts = [buf.subarray(0, got), value]; got += value.length;
+  for (;;){ const {done, value: v} = await reader.read(); if (done) break; parts.push(v); got += v.length; onProgress(Math.min(.99, got / total)); }
+  const out = new Uint8Array(got); let o = 0; for (const p of parts){ out.set(p, o); o += p.length; } return out;
+}
+
+/* CLIP byte-level BPE, same as open_clip's SimpleTokenizer */
+function makeTokenizer(tj){
+  const enc = new Map(tj.vocab.map((t, i) => [t, i]));
+  const ranks = new Map(tj.merges.map((m, i) => [m, i]));
+  const byteEnc = []; for (const [b, ch] of Object.entries(tj.byte_encoder)) byteEnc[+b] = ch;
+  const cache = new Map(), te = new TextEncoder();
+  const pat = /<start_of_text>|<end_of_text>|'s|'t|'re|'ve|'m|'ll|'d|[\p{L}]+|[\p{N}]|[^\s\p{L}\p{N}]+/giu;
+  const ta = document.createElement("textarea");
+  const unescape = s => { ta.innerHTML = s; return ta.value; };
+  function bpe(token){
+    if (cache.has(token)) return cache.get(token);
+    let word = [...token]; word[word.length - 1] += "</w>";
+    if (word.length === 1) { cache.set(token, word); return word; }
+    for (;;){
+      let best = null, bestRank = Infinity;
+      for (let i = 0; i < word.length - 1; i++){
+        const r = ranks.get(word[i] + " " + word[i + 1]);
+        if (r !== undefined && r < bestRank) { bestRank = r; best = [word[i], word[i + 1]]; }
+      }
+      if (!best) break;
+      const nw = [];
+      for (let i = 0; i < word.length;){
+        if (i < word.length - 1 && word[i] === best[0] && word[i + 1] === best[1]) { nw.push(best[0] + best[1]); i += 2; }
+        else { nw.push(word[i]); i += 1; }
+      }
+      word = nw;
+      if (word.length === 1) break;
+    }
+    cache.set(token, word); return word;
+  }
+  return function tokenize(text){
+    text = unescape(unescape(text)).replace(/\s+/g, " ").trim().toLowerCase();
+    const ids = [tj.sot];
+    for (const m of text.matchAll(pat)){
+      const s = [...te.encode(m[0])].map(b => byteEnc[b]).join("");
+      for (const w of bpe(s)) ids.push(enc.get(w));
+    }
+    ids.push(tj.eot);
+    const L = tj.context_length, out = new BigInt64Array(L);
+    const n = Math.min(ids.length, L);
+    for (let i = 0; i < n; i++) out[i] = BigInt(ids[i]);
+    if (ids.length > L) out[L - 1] = BigInt(tj.eot);
+    return out;
+  };
+}
+
+function setBoot(text, frac, cls){
+  const b = document.getElementById("boot");
+  document.getElementById("boot-text").textContent = text;
+  if (frac != null) document.getElementById("boot-bar").style.width = Math.round(frac * 100) + "%";
+  b.className = "boot" + (cls ? " " + cls : "");
+}
+
+E.ready = (async () => {
+  const info = E.info = await (await fetch("index/info.json")).json();
+  document.getElementById("model-link").href = info.model_base.startsWith("http") ? info.model_base.replace(/resolve\/main\/$/, "") : "model/";
+  ort.env.wasm.wasmPaths = ORT_DIST;
+  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+  setBoot("Loading the product index…", 0);
+  const ix = info.index, base = "index/";
+  const [coarse, pq, lists, codes, tj] = await Promise.all([
+    fetchBuf(base + "coarse.bin"), fetchBuf(base + "pq.bin"), fetchBuf(base + "lists.bin"), fetchBuf(base + "codes.bin"),
+    fetch(info.model_base + "tokenizer.json").then(r => r.json())]);
+  const f32 = u => new Float32Array(u.buffer, u.byteOffset, u.byteLength / 4);
+  Object.assign(E, {n: ix.n, d: ix.d, M: ix.M, nlist: ix.nlist, dsub: ix.d / ix.M,
+    coarse: f32(coarse), pq: f32(pq), lists: new Uint16Array(lists.buffer, lists.byteOffset, ix.n), codes});
+  E.tokenize = makeTokenizer(tj);
+  const mb = info.encoders.text.int8_mb;
+  setBoot(`Downloading the text model (${mb} MB, only the first time)…`, 0);
+  const model = await fetchBuf(info.model_base + "text.onnx", p => setBoot(`Downloading the text model (${mb} MB, only the first time)… ${Math.round(p * 100)}%`, p));
+  setBoot("Starting the model…", 1);
+  E.text = await ort.InferenceSession.create(model, {executionProviders: ["wasm"]});
+  setBoot(`Ready. Searching ${ix.n.toLocaleString("en-IN")} products on your device.`, 1, "ready");
+})().catch(e => { setBoot(e.message || "Could not load the search model.", null, "err"); throw e; });
+
+E.vision = null;
+async function visionSession(){
+  if (!E.vision) E.vision = (async () => {
+    const mb = E.info.encoders.vision.int8_mb;
+    const buf = await fetchBuf(E.info.model_base + "vision.onnx", p => setBoot(`Downloading the photo model (${mb} MB, only the first time)… ${Math.round(p * 100)}%`, p));
+    const s = await ort.InferenceSession.create(buf, {executionProviders: ["wasm"]});
+    setBoot(`Ready. Searching ${E.n.toLocaleString("en-IN")} products on your device.`, 1, "ready");
+    return s;
+  })().catch(e => { E.vision = null; throw e; });
+  return E.vision;
+}
+
+E.embedText = async text => {
+  const ids = E.tokenize(text);
+  const out = await E.text.run({input_ids: new ort.Tensor("int64", ids, [1, ids.length])});
+  return out.embedding.data;
+};
+
+E.embedImage = async img => {
+  const P = E.info.preprocess, S = P.size;
+  const scale = S / Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
+  const w = Math.round((img.naturalWidth || img.width) * scale), h = Math.round((img.naturalHeight || img.height) * scale);
+  const c = document.createElement("canvas"); c.width = S; c.height = S;
+  const g = c.getContext("2d"); g.imageSmoothingQuality = "high";
+  g.drawImage(img, Math.round((S - w) / 2), Math.round((S - h) / 2), w, h);
+  const px = g.getImageData(0, 0, S, S).data, x = new Float32Array(3 * S * S);
+  for (let i = 0; i < S * S; i++) for (let ch = 0; ch < 3; ch++)
+    x[ch * S * S + i] = (px[i * 4 + ch] / 255 - P.mean[ch]) / P.std[ch];
+  const s = await visionSession();
+  const out = await s.run({pixel_values: new ort.Tensor("float32", x, [1, 3, S, S])});
+  return out.embedding.data;
+};
+
+/* exhaustive IVF-PQ scan: score = q.coarse[list] + sum_m table[m][code_m] */
+E.search = (q, k, exclude = -1) => {
+  const {n, d, M, nlist, dsub, coarse, pq, lists, codes} = E;
+  const cs = new Float32Array(nlist);
+  for (let l = 0; l < nlist; l++){ let s = 0; const o = l * d; for (let j = 0; j < d; j++) s += q[j] * coarse[o + j]; cs[l] = s; }
+  const T = new Float32Array(M * 256);
+  for (let m = 0; m < M; m++) for (let c = 0; c < 256; c++){
+    let s = 0; const o = (m * 256 + c) * dsub, qo = m * dsub;
+    for (let j = 0; j < dsub; j++) s += q[qo + j] * pq[o + j];
+    T[m * 256 + c] = s;
+  }
+  const topS = new Float32Array(k).fill(-Infinity), topI = new Int32Array(k).fill(-1);
+  for (let i = 0; i < n; i++){
+    let s = cs[lists[i]]; const b = i * M;
+    for (let m = 0; m < M; m++) s += T[(m << 8) + codes[b + m]];
+    if (s > topS[k - 1] && i !== exclude){
+      let p = k - 1;
+      while (p > 0 && topS[p - 1] < s){ topS[p] = topS[p - 1]; topI[p] = topI[p - 1]; p--; }
+      topS[p] = s; topI[p] = i;
+    }
+  }
+  return [...topI].map((i, r) => ({row: i, score: topS[r]})).filter(x => x.row >= 0);
+};
+
+E.reconstruct = i => {
+  const {d, M, dsub, coarse, pq, lists, codes} = E, v = new Float32Array(d), co = lists[i] * d;
+  for (let m = 0; m < M; m++){ const o = (m * 256 + codes[i * M + m]) * dsub; for (let j = 0; j < dsub; j++) v[m * dsub + j] = coarse[co + m * dsub + j] + pq[o + j]; }
+  let nrm = 0; for (const x of v) nrm += x * x; nrm = Math.sqrt(nrm) || 1;
+  return v.map(x => x / nrm);
+};
+
+const shards = new Map();
+E.meta = async rows => {
+  const S = E.info.shard;
+  await Promise.all([...new Set(rows.map(r => Math.floor(r / S)))].map(s => {
+    if (!shards.has(s)) shards.set(s, fetch(`meta/${String(s).padStart(3, "0")}.json`).then(r => r.json()).catch(e => { shards.delete(s); throw e; }));
+    return shards.get(s);
+  }));
+  return Promise.all(rows.map(async r => (await shards.get(Math.floor(r / S)))[r % S]));
+};
+
+async function results(hits, t0){
+  const metas = await E.meta(hits.map(h => h.row));
+  const ms = performance.now() - t0;
+  const live = document.getElementById("live-ms"); if (live) live.textContent = `${Math.round(ms)} ms (model + scan of ${E.n.toLocaleString("en-IN")} products)`;
+  return {latency_ms: ms, items_searched: E.n, results: hits.map((h, i) => {
+    const [path, name, category, brand, color] = metas[i];
+    return {row: h.row, score: h.score, image_path: path, image_url: E.info.image_base + path, name, category, brand, color};
+  })};
+}
+E.textSearch = async (text, k) => { await E.ready; const t0 = performance.now(); return results(E.search(await E.embedText(text), k), t0); };
+E.photoSearch = async (img, k) => { await E.ready; const t0 = performance.now(); return results(E.search(await E.embedImage(img), k), t0); };
+E.similar = async (row, k) => {
+  await E.ready; const t0 = performance.now();
+  const d = await results(E.search(E.reconstruct(row), k, row), t0);
+  const [path, name] = (await E.meta([row]))[0];
+  d.source = {name, image_url: E.info.image_base + path};
+  return d;
+};
+</script>
+<script>
+const $ = s => document.querySelector(s);
+const grid = $("#grid"), status = $("#status"), q = $("#q");
+const K = 12;
+let mode = "text";
+
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+const fmt = n => n.toLocaleString("en-IN");
+
+function setMode(m){
+  mode = m;
+  $("#m-text").setAttribute("aria-pressed", m === "text");
+  $("#m-photo").setAttribute("aria-pressed", m === "photo");
+  $("#qform").style.display = m === "text" ? "" : "none";
+  $("#tries").style.display = m === "text" ? "" : "none";
+  $("#drop").classList.toggle("on", m === "photo");
+  (m === "text" ? q : $("#drop")).focus();
+}
+$("#m-text").onclick = () => setMode("text");
+$("#m-photo").onclick = () => setMode("photo");
+
+function loading(label){
+  status.innerHTML = `<h2>${label}</h2>`;
+  grid.innerHTML = Array.from({length: 8}, () => `<li class="card skel"><div class="ph"></div><div class="body"><h3>&nbsp;</h3></div></li>`).join("");
+}
+
+function render(data, heading){
+  const r = data.results || [];
+  const top = r.length && r[0].score > 0 ? r[0].score : 1;
+  status.innerHTML = `${heading}<span class="speed">Searched <b>${fmt(data.items_searched || 121549)}</b> products in <b>${Math.round(data.latency_ms)} ms</b></span>`;
+  if (!r.length){ grid.innerHTML = `<li class="msg">No matches. Try fewer words, or describe the product's type and colour.</li>`; return; }
+  grid.innerHTML = r.map((p, i) => `
+    <li class="card">
+      <div class="ph"><span class="rank">${i + 1}</span>
+        <img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'none',textContent:'${esc((p.name||'?')[0])}'}))">
+      </div>
+      <div class="body">
+        <h3 title="${esc(p.name)}">${esc(p.name)}</h3>
+        <div class="brand">${esc(p.brand || p.category)}</div>
+        <div class="match" title="Cosine similarity ${p.score}"><span class="bar"><i style="width:${Math.min(100, Math.max(8, Math.round(100 * Math.max(p.score, 0) / top)))}%"></i></span>${p.score.toFixed(3)}</div>
+        <button class="more" type="button" data-row="${p.row}">More like this</button>
+      </div>
+    </li>`).join("");
+}
+
+function fail(e){
+  console.error(e);
+  status.innerHTML = "";
+  grid.innerHTML = `<li class="msg err">${esc(e.message || "Something went wrong. Reload the page and try again.")}</li>`;
+}
+
+async function searchText(text){
+  text = text.trim(); if (!text) { q.focus(); return; }
+  q.value = text;
+  history.replaceState(null, "", "?q=" + encodeURIComponent(text));
+  loading(`Matches for “${esc(text)}”`);
+  try { render(await E.textSearch(text, K), `<h2>Matches for “${esc(text)}”</h2>`); }
+  catch (e) { fail(e); }
+}
+
+async function searchPhoto(file){
+  if (!file || !file.type.startsWith("image/")) { fail(new Error("That file is not an image. Choose a JPG or PNG.")); return; }
+  const img = $("#preview"); img.src = URL.createObjectURL(file); img.classList.add("has");
+  loading("Products that look like your photo");
+  if (file.size > 10 * 2**20) { fail(new Error("That image is larger than 10 MB. Try a smaller photo.")); return; }
+  try {
+    await img.decode().catch(() => { throw new Error("Could not read that file as an image. Use a JPG or PNG."); });
+    render(await E.photoSearch(img, K), `<h2>Products that look like your photo</h2>`);
+  } catch (e) { fail(e); }
+}
+
+async function moreLike(row){
+  loading("Finding similar products");
+  window.scrollTo({top: $(".hero").offsetTop + $(".hero").offsetHeight - 20, behavior: "smooth"});
+  try {
+    const d = await E.similar(row, K);
+    render(d, `<h2 class="source"><img src="${esc(d.source.image_url)}" alt="">Looks like “${esc(d.source.name.slice(0, 60))}”</h2>`);
+  } catch (e) { fail(e); }
+}
+
+$("#qform").onsubmit = e => { e.preventDefault(); searchText(q.value); };
+$("#tries").onclick = e => { const b = e.target.closest("button"); if (b) searchText(b.textContent); };
+grid.onclick = e => { const b = e.target.closest(".more"); if (b) moreLike(+b.dataset.row); };
+
+const drop = $("#drop"), file = $("#file");
+file.onchange = () => searchPhoto(file.files[0]);
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); file.click(); } };
+["dragenter","dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => searchPhoto(e.dataTransfer.files[0]));
+window.addEventListener("paste", e => {
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith("image/"));
+  if (item) { setMode("photo"); searchPhoto(item.getAsFile()); }
+});
+
+searchText(new URLSearchParams(location.search).get("q") || "black leather office chair");
+</script>
+</body>
+</html>
