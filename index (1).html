@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product Search — CLIP in your browser</title>
+<meta name="description" content="Search 121,549 Amazon products by describing them or by showing a photo. A fine-tuned CLIP model and a FAISS IVF-PQ index, running entirely in the browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap" rel="stylesheet">
+<style>
+/* Studio-sweep grey backdrop, white product tiles, one red "scanner" line. */
+:root{
+  --sweep:#DADDE2; --sweep-deep:#CDD1D7; --tile:#FFFFFF; --ink:#1B1F27; --muted:#555D6B; --line:#BFC4CC;
+  --laser:#E5322B; --laser-soft:rgba(229,50,43,.14); --ok:#1F8A5B;
+  --font:"Archivo", "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --sweep:#1A1D23; --sweep-deep:#14171C; --tile:#F2F3F5; --ink:#E8EAEE; --muted:#A0A7B3; --line:#323844;
+         --laser:#FF5A4E; --laser-soft:rgba(255,90,78,.18); --ok:#4CC38A; }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--sweep);color:var(--ink);font:400 16px/1.55 var(--font);font-variation-settings:"wdth" 100}
+a{color:inherit}
+button{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--laser);outline-offset:2px;border-radius:4px}
+.wrap{max-width:1240px;margin:0 auto;padding:0 24px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* top bar */
+.bar{display:flex;justify-content:space-between;align-items:center;padding:20px 0 0}
+.mark{display:flex;align-items:center;gap:10px;font-weight:700;font-variation-settings:"wdth" 112;letter-spacing:-.01em}
+.mark svg{width:26px;height:26px}
+.bar nav{display:flex;gap:22px;font-size:15px}
+.bar nav a{color:var(--muted);text-decoration:none}
+.bar nav a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+
+/* search block: the typed query is the headline */
+.search{padding:56px 0 8px}
+.lede{margin:0 0 22px;color:var(--muted);max-width:62ch;font-size:17px}
+.lede b{color:var(--ink);font-weight:600}
+.q{display:grid;grid-template-columns:1fr auto auto;align-items:end;gap:12px;border-bottom:3px solid var(--ink);padding-bottom:8px;position:relative}
+.q:focus-within{border-bottom-color:var(--laser)}
+.q input{min-width:0;border:0;background:transparent;color:var(--ink);padding:0;
+  font:700 clamp(34px,6.2vw,76px)/1.05 var(--font);font-variation-settings:"wdth" 125;letter-spacing:-.035em}
+.q input::placeholder{color:var(--muted);opacity:.45}
+.q input:focus{outline:none}
+.btn{border:0;border-radius:999px;padding:12px 22px;font-weight:600;font-size:16px;cursor:pointer;white-space:nowrap}
+.btn.go{background:var(--ink);color:var(--sweep)}
+.btn.go:hover{background:var(--laser);color:#fff}
+.btn.cam{background:transparent;border:2px solid var(--ink);display:flex;align-items:center;gap:8px;padding:10px 18px}
+.btn.cam svg{width:18px;height:18px}
+.btn.cam:hover,.btn.cam[aria-pressed="true"]{background:var(--ink);color:var(--sweep)}
+.tries{display:flex;flex-wrap:wrap;gap:8px 18px;margin:16px 0 0;padding:0;list-style:none;font-size:15px;color:var(--muted)}
+.tries li:first-child{color:var(--muted)}
+.tries button{border:0;background:none;padding:0;cursor:pointer;color:var(--ink);text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:4px;text-decoration-thickness:2px}
+.tries button:hover{text-decoration-color:var(--laser)}
+
+.drop{display:none;margin-top:18px;border:2px dashed var(--line);border-radius:14px;background:var(--sweep-deep);padding:20px 22px;align-items:center;gap:18px;cursor:pointer}
+.drop.on{display:flex}
+.drop.over{border-color:var(--laser);background:var(--laser-soft)}
+.drop img{width:84px;height:84px;object-fit:contain;background:#fff;border-radius:10px;display:none}
+.drop img.has{display:block}
+.drop strong{display:block;font-size:18px;font-variation-settings:"wdth" 112}
+.drop span{color:var(--muted);font-size:15px}
+
+.boot{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted);margin:18px 0 0;min-height:22px}
+.boot .dot{width:9px;height:9px;border-radius:50%;background:var(--laser);flex:none;animation:blink 1s infinite alternate}
+.boot.ready .dot{background:var(--ok);animation:none}
+.boot.err{color:var(--laser)}
+.boot .pbar{width:160px;height:4px;border-radius:4px;background:var(--line);overflow:hidden;flex:none}
+.boot.ready .pbar{display:none}
+.boot .pbar i{display:block;height:100%;width:0;background:var(--laser);transition:width .2s}
+@keyframes blink{to{opacity:.3}}
+
+/* results */
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:8px 20px;flex-wrap:wrap;margin:40px 0 16px}
+.head h2{margin:0;font-size:22px;line-height:1.25;font-weight:700;font-variation-settings:"wdth" 112;letter-spacing:-.01em;display:flex;align-items:center;gap:12px}
+.head h2 img{width:44px;height:44px;object-fit:contain;background:#fff;border-radius:8px;padding:3px}
+.head .speed{color:var(--muted);font-size:15px}
+.head .speed b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+
+.shelf{position:relative;display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:14px;list-style:none;margin:0;padding:0}
+.tile{background:var(--tile);color:#1B1F27;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.tile .ph{aspect-ratio:1/1;display:grid;place-items:center;position:relative;padding:12%}
+.tile .ph img{max-width:100%;max-height:100%;object-fit:contain}
+.tile .none{font-size:44px;font-weight:700;color:#B8BEC7}
+.tile .rank{position:absolute;top:10px;left:12px;font-weight:700;font-size:15px;font-variation-settings:"wdth" 75;color:#5E6573;font-variant-numeric:tabular-nums}
+.tile .info{padding:0 14px 14px;display:flex;flex-direction:column;gap:3px;flex:1}
+.tile h3{margin:0;font-size:15px;line-height:1.3;font-weight:600;font-variation-settings:"wdth" 85;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tile .brand{font-size:13px;color:#5E6573}
+.tile .more{margin-top:auto;align-self:flex-start;border:0;background:none;padding:8px 0 0;font-size:14px;font-weight:600;cursor:pointer;color:#1B1F27;text-decoration:underline;text-decoration-color:#C3C8D0;text-underline-offset:4px;text-decoration-thickness:2px}
+.tile .more:hover{text-decoration-color:var(--laser)}
+.tile .score{font-size:12px;color:#5E6573;font-variant-numeric:tabular-nums}
+
+/* the best match gets the wide slot */
+.shelf.ranked .tile:first-child{grid-column:span 2;flex-direction:row}
+.shelf.ranked .tile:first-child .ph{width:52%;flex:none;aspect-ratio:auto;min-height:250px}
+.shelf.ranked .tile:first-child .info{padding:46px 18px 18px 4px;gap:6px}
+.shelf.ranked .tile:first-child h3{font-size:21px;line-height:1.25;font-variation-settings:"wdth" 100;-webkit-line-clamp:4;letter-spacing:-.01em}
+.shelf.ranked .tile:first-child .brand{font-size:15px}
+.shelf.ranked .tile:first-child .rank{color:#C4271F;font-size:17px}
+.wall .tile .info{display:none}
+.wall .tile .ph{padding:14%}
+
+/* user-triggered scan: a red line sweeps the shelf while the model runs */
+.shelf.scanning .tile{opacity:.45;transition:opacity .2s}
+.shelf.scanning::after{content:"";position:absolute;left:-8px;right:-8px;top:0;height:2px;background:var(--laser);
+  box-shadow:0 0 0 6px var(--laser-soft),0 0 22px 4px var(--laser-soft);animation:scan 1.1s cubic-bezier(.45,0,.55,1) infinite alternate}
+@keyframes scan{from{top:0}to{top:calc(100% - 2px)}}
+.msg{grid-column:1/-1;background:var(--sweep-deep);border-radius:12px;padding:22px;color:var(--muted)}
+.msg.err{color:var(--laser)}
+
+/* how it works */
+.how{margin:72px 0 0;padding:44px 0 48px;border-top:2px solid var(--line);display:grid;grid-template-columns:1.1fr .9fr;gap:56px}
+.how h2{font-size:28px;line-height:1.2;margin:0 0 20px;font-weight:700;font-variation-settings:"wdth" 118;letter-spacing:-.02em}
+.how ol{margin:0;padding:0;list-style:none;counter-reset:s}
+.how li{counter-increment:s;display:grid;grid-template-columns:40px 1fr;gap:10px;margin-bottom:20px;max-width:60ch}
+.how li::before{content:counter(s);font-size:30px;line-height:1;font-weight:800;font-variation-settings:"wdth" 62;color:var(--laser)}
+.how li b{display:block;font-weight:600}
+.how li span{color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:15px}
+caption{text-align:left;color:var(--muted);font-size:14px;padding-bottom:10px}
+th,td{text-align:left;padding:11px 0;border-bottom:1px solid var(--line)}
+th{font-weight:600;color:var(--muted);font-size:14px}
+td+td,th+th{text-align:right;padding-left:12px}
+td.n{font-variant-numeric:tabular-nums}
+td.up{font-weight:700}
+.note{color:var(--muted);font-size:14px;margin:14px 0 0;max-width:60ch}
+footer{color:var(--muted);font-size:14px;padding:0 0 36px}
+
+@media (max-width:820px){
+  .how{grid-template-columns:1fr;gap:36px}
+  .search{padding-top:36px}
+  .q{grid-template-columns:1fr auto;border-bottom:0;padding:0}
+  .q input{grid-column:1/-1;border-bottom:3px solid var(--ink);padding-bottom:8px}
+  .q:focus-within input{border-bottom-color:var(--laser)}
+  .btn.go{justify-self:stretch}
+  .shelf{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .shelf.ranked .tile:first-child{flex-direction:column}
+  .shelf.ranked .tile:first-child .ph{width:100%;aspect-ratio:16/10;min-height:0}
+  .shelf.ranked .tile:first-child .info{padding:0 16px 16px}
+  .shelf.ranked .tile:first-child h3{font-size:18px}
+  .bar nav .hide-sm{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .boot .dot{animation:none}
+  .shelf.scanning::after{animation:none;top:50%}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <div class="mark"><svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="6" fill="currentColor"/><rect x="5" y="12" width="16" height="2" fill="#E5322B"/></svg>Product Search</div>
+    <nav>
+      <a href="#how">How it works</a>
+      <a class="hide-sm" href="#" id="model-link" target="_blank" rel="noopener">Model</a>
+      <a href="https://github.com/Mahendr99ar/multimodal-product-search" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="search">
+      <p class="lede">Describe a product in your own words, or show a photo, and get the closest matches from <b>121,549 real Amazon listings</b>. The model runs inside your browser, so nothing you type or upload leaves your device.</p>
+
+      <form class="q" id="qform" role="search">
+        <label for="q" class="sr">Describe the product</label>
+        <input id="q" name="q" type="search" autocomplete="off" placeholder="a blue ceramic mug" maxlength="200">
+        <button class="btn go" type="submit">Search</button>
+        <button class="btn cam" type="button" id="cam" aria-pressed="false" aria-controls="drop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Photo
+        </button>
+      </form>
+
+      <label class="drop" id="drop" tabindex="0">
+        <input type="file" id="file" accept="image/*" hidden>
+        <img id="preview" alt="Your photo">
+        <div><strong>Drop a product photo here</strong><span>or click to choose one, or paste an image. JPG or PNG, up to 10 MB.</span></div>
+      </label>
+
+      <ul class="tries" id="tries" aria-label="Example searches">
+        <li>Try</li>
+        <li><button type="button">black leather office chair</button></li>
+        <li><button type="button">running shoes for women</button></li>
+        <li><button type="button">wooden bookshelf with five shelves</button></li>
+        <li><button type="button">stainless steel water bottle</button></li>
+        <li><button type="button">rug with geometric pattern</button></li>
+      </ul>
+
+      <div class="boot" id="boot" role="status"><span class="dot"></span><span id="boot-text">Starting…</span><span class="pbar"><i id="boot-bar"></i></span></div>
+    </section>
+
+    <section aria-live="polite">
+      <div class="head" id="status"><h2>A random shelf from the catalog</h2><span class="speed">Search to pull out what you want</span></div>
+      <ul class="shelf wall" id="grid"></ul>
+    </section>
+
+    <section class="how" id="how">
+      <div>
+        <h2>How it works</h2>
+        <ol>
+          <li><div><b>Your words or photo become a vector.</b><span>A CLIP model turns text and images into 512 numbers in the same space, so "red sneaker" and a photo of one land close together.</span></div></li>
+          <li><div><b>The model was fine-tuned on Amazon listings.</b><span>Trained with a contrastive loss on 109,395 product photo and title pairs from the Amazon Berkeley Objects dataset, so it learned how products are actually described.</span></div></li>
+          <li><div><b>A compressed index finds the nearest products.</b><span>Every catalog photo is pre-embedded into a FAISS IVF-PQ index. A query is compared against all 121,549 products.</span></div></li>
+          <li><div><b>It all runs in your browser.</b><span>The encoders are exported to ONNX and quantized to INT8, then run with ONNX Runtime Web. The index ships as about 7 MB of arrays and is scanned in JavaScript. The same model is also packaged as a Dockerised FastAPI service, which I deployed and load-tested on AWS EC2.</span></div></li>
+        </ol>
+      </div>
+      <div>
+        <h2>Results</h2>
+        <table>
+          <caption>Text-to-image retrieval on 6,077 products the model never saw in training</caption>
+          <thead><tr><th scope="col">Metric</th><th scope="col">Before fine-tuning</th><th scope="col">After</th></tr></thead>
+          <tbody>
+            <tr><td>Recall@1</td><td class="n">41.6%</td><td class="n up">82.4%</td></tr>
+            <tr><td>Recall@5</td><td class="n">65.8%</td><td class="n up">96.2%</td></tr>
+            <tr><td>Recall@10</td><td class="n">74.2%</td><td class="n up">98.0%</td></tr>
+          </tbody>
+        </table>
+        <table style="margin-top:22px">
+          <caption>Speed</caption>
+          <tbody>
+            <tr><td>API on AWS EC2, p95</td><td class="n">79 ms on 2 CPU cores</td></tr>
+            <tr><td>This page, on your device</td><td class="n" id="live-ms">measured on your first search</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Recall@1 is how often the exact product described comes back as the first result.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>Built by Mahendra Meena. Product data and photos: Amazon Berkeley Objects (CC BY 4.0).</footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+<script>
+/* ---------- in-browser search engine: CLIP (ONNX INT8) + IVF-PQ scan ---------- */
+const ORT_DIST = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+const E = window.__engine = {};
+
+async function fetchBuf(url, onProgress){
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not download ${url.split("/").pop()} (error ${res.status}).`);
+  const total = +res.headers.get("content-length") || 0;
+  if (!onProgress || !res.body || !total) return new Uint8Array(await res.arrayBuffer());
+  const out = new Uint8Array(total), reader = res.body.getReader();
+  let got = 0;
+  for (;;){
+    const {done, value} = await reader.read();
+    if (done) break;
+    if (got + value.length > out.length) { // content-length was compressed size
+      const bigger = new Uint8Array(Math.max(out.length * 2, got + value.length)); bigger.set(out.subarray(0, got));
+      return finishGrow(reader, bigger, got, value, onProgress, total);
+    }
+    out.set(value, got); got += value.length; onProgress(got / total);
+  }
+  return got === out.length ? out : out.slice(0, got);
+}
+async function finishGrow(reader, buf, got, value, onProgress, total){
+  const parts = [buf.subarray(0, got), value]; got += value.length;
+  for (;;){ const {done, value: v} = await reader.read(); if (done) break; parts.push(v); got += v.length; onProgress(Math.min(.99, got / total)); }
+  const out = new Uint8Array(got); let o = 0; for (const p of parts){ out.set(p, o); o += p.length; } return out;
+}
+
+/* CLIP byte-level BPE, same as open_clip's SimpleTokenizer */
+function makeTokenizer(tj){
+  const enc = new Map(tj.vocab.map((t, i) => [t, i]));
+  const ranks = new Map(tj.merges.map((m, i) => [m, i]));
+  const byteEnc = []; for (const [b, ch] of Object.entries(tj.byte_encoder)) byteEnc[+b] = ch;
+  const cache = new Map(), te = new TextEncoder();
+  const pat = /<start_of_text>|<end_of_text>|'s|'t|'re|'ve|'m|'ll|'d|[\p{L}]+|[\p{N}]|[^\s\p{L}\p{N}]+/giu;
+  const ta = document.createElement("textarea");
+  const unescape = s => { ta.innerHTML = s; return ta.value; };
+  function bpe(token){
+    if (cache.has(token)) return cache.get(token);
+    let word = [...token]; word[word.length - 1] += "</w>";
+    if (word.length === 1) { cache.set(token, word); return word; }
+    for (;;){
+      let best = null, bestRank = Infinity;
+      for (let i = 0; i < word.length - 1; i++){
+        const r = ranks.get(word[i] + " " + word[i + 1]);
+        if (r !== undefined && r < bestRank) { bestRank = r; best = [word[i], word[i + 1]]; }
+      }
+      if (!best) break;
+      const nw = [];
+      for (let i = 0; i < word.length;){
+        if (i < word.length - 1 && word[i] === best[0] && word[i + 1] === best[1]) { nw.push(best[0] + best[1]); i += 2; }
+        else { nw.push(word[i]); i += 1; }
+      }
+      word = nw;
+      if (word.length === 1) break;
+    }
+    cache.set(token, word); return word;
+  }
+  return function tokenize(text){
+    text = unescape(unescape(text)).replace(/\s+/g, " ").trim().toLowerCase();
+    const ids = [tj.sot];
+    for (const m of text.matchAll(pat)){
+      const s = [...te.encode(m[0])].map(b => byteEnc[b]).join("");
+      for (const w of bpe(s)) ids.push(enc.get(w));
+    }
+    ids.push(tj.eot);
+    const L = tj.context_length, out = new BigInt64Array(L);
+    const n = Math.min(ids.length, L);
+    for (let i = 0; i < n; i++) out[i] = BigInt(ids[i]);
+    if (ids.length > L) out[L - 1] = BigInt(tj.eot);
+    return out;
+  };
+}
+
+function setBoot(text, frac, cls){
+  const b = document.getElementById("boot");
+  document.getElementById("boot-text").textContent = text;
+  if (frac != null) document.getElementById("boot-bar").style.width = Math.round(frac * 100) + "%";
+  b.className = "boot" + (cls ? " " + cls : "");
+}
+
+E.infoP = fetch("index/info.json").then(r => { if (!r.ok) throw new Error("Could not load the product index."); return r.json(); }).then(i => (E.info = i));
+E.ready = (async () => {
+  const info = await E.infoP;
+  document.getElementById("model-link").href = info.model_base.startsWith("http") ? info.model_base.replace(/resolve\/main\/$/, "") : "model/";
+  ort.env.wasm.wasmPaths = ORT_DIST;
+  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+  setBoot("Loading the product index…", 0);
+  const ix = info.index, base = "index/";
+  const [coarse, pq, lists, codes, tj] = await Promise.all([
+    fetchBuf(base + "coarse.bin"), fetchBuf(base + "pq.bin"), fetchBuf(base + "lists.bin"), fetchBuf(base + "codes.bin"),
+    fetch(info.model_base + "tokenizer.json").then(r => r.json())]);
+  const f32 = u => new Float32Array(u.buffer, u.byteOffset, u.byteLength / 4);
+  Object.assign(E, {n: ix.n, d: ix.d, M: ix.M, nlist: ix.nlist, dsub: ix.d / ix.M,
+    coarse: f32(coarse), pq: f32(pq), lists: new Uint16Array(lists.buffer, lists.byteOffset, ix.n), codes});
+  E.tokenize = makeTokenizer(tj);
+  const mb = info.encoders.text.int8_mb;
+  setBoot(`Downloading the text model (${mb} MB, only the first time)…`, 0);
+  const model = await fetchBuf(info.model_base + "text.onnx", p => setBoot(`Downloading the text model (${mb} MB, only the first time)… ${Math.round(p * 100)}%`, p));
+  setBoot("Starting the model…", 1);
+  E.text = await ort.InferenceSession.create(model, {executionProviders: ["wasm"]});
+  setBoot(`Ready. Searching ${ix.n.toLocaleString("en-US")} products on your device.`, 1, "ready");
+})().catch(e => { setBoot(e.message || "Could not load the search model.", null, "err"); throw e; });
+
+E.vision = null;
+async function visionSession(){
+  if (!E.vision) E.vision = (async () => {
+    const mb = E.info.encoders.vision.int8_mb;
+    const buf = await fetchBuf(E.info.model_base + "vision.onnx", p => setBoot(`Downloading the photo model (${mb} MB, only the first time)… ${Math.round(p * 100)}%`, p));
+    const s = await ort.InferenceSession.create(buf, {executionProviders: ["wasm"]});
+    setBoot(`Ready. Searching ${E.n.toLocaleString("en-US")} products on your device.`, 1, "ready");
+    return s;
+  })().catch(e => { E.vision = null; throw e; });
+  return E.vision;
+}
+
+E.embedText = async text => {
+  const ids = E.tokenize(text);
+  const out = await E.text.run({input_ids: new ort.Tensor("int64", ids, [1, ids.length])});
+  return out.embedding.data;
+};
+
+E.embedImage = async img => {
+  const P = E.info.preprocess, S = P.size;
+  const scale = S / Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
+  const w = Math.round((img.naturalWidth || img.width) * scale), h = Math.round((img.naturalHeight || img.height) * scale);
+  const c = document.createElement("canvas"); c.width = S; c.height = S;
+  const g = c.getContext("2d"); g.imageSmoothingQuality = "high";
+  g.drawImage(img, Math.round((S - w) / 2), Math.round((S - h) / 2), w, h);
+  const px = g.getImageData(0, 0, S, S).data, x = new Float32Array(3 * S * S);
+  for (let i = 0; i < S * S; i++) for (let ch = 0; ch < 3; ch++)
+    x[ch * S * S + i] = (px[i * 4 + ch] / 255 - P.mean[ch]) / P.std[ch];
+  const s = await visionSession();
+  const out = await s.run({pixel_values: new ort.Tensor("float32", x, [1, 3, S, S])});
+  return out.embedding.data;
+};
+
+/* exhaustive IVF-PQ scan: score = q.coarse[list] + sum_m table[m][code_m] */
+E.search = (q, k, exclude = -1) => {
+  const {n, d, M, nlist, dsub, coarse, pq, lists, codes} = E;
+  const cs = new Float32Array(nlist);
+  for (let l = 0; l < nlist; l++){ let s = 0; const o = l * d; for (let j = 0; j < d; j++) s += q[j] * coarse[o + j]; cs[l] = s; }
+  const T = new Float32Array(M * 256);
+  for (let m = 0; m < M; m++) for (let c = 0; c < 256; c++){
+    let s = 0; const o = (m * 256 + c) * dsub, qo = m * dsub;
+    for (let j = 0; j < dsub; j++) s += q[qo + j] * pq[o + j];
+    T[m * 256 + c] = s;
+  }
+  const topS = new Float32Array(k).fill(-Infinity), topI = new Int32Array(k).fill(-1);
+  for (let i = 0; i < n; i++){
+    let s = cs[lists[i]]; const b = i * M;
+    for (let m = 0; m < M; m++) s += T[(m << 8) + codes[b + m]];
+    if (s > topS[k - 1] && i !== exclude){
+      let p = k - 1;
+      while (p > 0 && topS[p - 1] < s){ topS[p] = topS[p - 1]; topI[p] = topI[p - 1]; p--; }
+      topS[p] = s; topI[p] = i;
+    }
+  }
+  return [...topI].map((i, r) => ({row: i, score: topS[r]})).filter(x => x.row >= 0);
+};
+
+E.reconstruct = i => {
+  const {d, M, dsub, coarse, pq, lists, codes} = E, v = new Float32Array(d), co = lists[i] * d;
+  for (let m = 0; m < M; m++){ const o = (m * 256 + codes[i * M + m]) * dsub; for (let j = 0; j < dsub; j++) v[m * dsub + j] = coarse[co + m * dsub + j] + pq[o + j]; }
+  let nrm = 0; for (const x of v) nrm += x * x; nrm = Math.sqrt(nrm) || 1;
+  return v.map(x => x / nrm);
+};
+
+const shards = new Map();
+E.meta = async rows => {
+  const S = E.info.shard;
+  await Promise.all([...new Set(rows.map(r => Math.floor(r / S)))].map(s => {
+    if (!shards.has(s)) shards.set(s, fetch(`meta/${String(s).padStart(3, "0")}.json`).then(r => r.json()).catch(e => { shards.delete(s); throw e; }));
+    return shards.get(s);
+  }));
+  return Promise.all(rows.map(async r => (await shards.get(Math.floor(r / S)))[r % S]));
+};
+
+async function results(hits, t){
+  const metas = await E.meta(hits.map(h => h.row));   // product names: small files, fetched after timing
+  const live = document.getElementById("live-ms");
+  if (live) live.textContent = `${Math.round(t.encode + t.scan)} ms (model ${Math.round(t.encode)} + index ${Math.round(t.scan)})`;
+  return {latency_ms: t.encode + t.scan, encode_ms: t.encode, scan_ms: t.scan, items_searched: E.n, results: hits.map((h, i) => {
+    const [path, name, category, brand, color] = metas[i];
+    return {row: h.row, score: h.score, image_path: path, image_url: E.info.image_base + path, name, category, brand, color};
+  })};
+}
+async function timed(embed, k, exclude = -1){
+  await E.ready;
+  const t0 = performance.now(); const q = await embed();
+  const t1 = performance.now(); const hits = E.search(q, k, exclude);
+  const t2 = performance.now();
+  return results(hits, {encode: t1 - t0, scan: t2 - t1});
+}
+E.textSearch = (text, k) => timed(() => E.embedText(text), k);
+E.photoSearch = async (img, k) => { await E.ready; await visionSession(); return timed(() => E.embedImage(img), k); };  // model download is not search time
+E.similar = async (row, k) => {
+  const d = await timed(async () => E.reconstruct(row), k, row);
+  const [path, name] = (await E.meta([row]))[0];
+  d.source = {name, image_url: E.info.image_base + path};
+  return d;
+};
+</script>
+<script>
+const $ = s => document.querySelector(s);
+const grid = $("#grid"), status = $("#status"), q = $("#q"), cam = $("#cam"), drop = $("#drop"), file = $("#file");
+const K = 11;   // best match takes two slots, so 11 results fill 2-, 3-, 4- and 6-column rows
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = n => n.toLocaleString("en-US");
+const fallback = name => `this.replaceWith(Object.assign(document.createElement('span'),{className:'none',textContent:'${esc((name || "?")[0]).replace(/'/g, "")}'}))`;
+
+function head(title, speed){ status.innerHTML = `<h2>${title}</h2>${speed ? `<span class="speed">${speed}</span>` : ""}`; }
+
+function scanning(title){
+  head(title, "Scanning the catalog…");
+  if (!grid.children.length || grid.querySelector(".msg"))
+    grid.innerHTML = Array.from({length: 8}, () => `<li class="tile"><div class="ph"></div></li>`).join("");
+  grid.classList.add("scanning");
+}
+
+function render(data, title){
+  grid.classList.remove("scanning", "wall"); grid.classList.add("ranked");
+  const r = data.results || [];
+  head(title, `Searched <b>${fmt(data.items_searched)}</b> products in <b>${Math.round(data.latency_ms)} ms</b> on your device`);
+  if (!r.length){ grid.innerHTML = `<li class="msg">No matches. Try fewer words, or name the product type and colour.</li>`; return; }
+  grid.innerHTML = r.map((p, i) => `
+    <li class="tile">
+      <div class="ph"><span class="rank">${i + 1}</span>
+        <img src="${esc(p.image_url)}" alt="" loading="lazy" onerror="${fallback(p.name)}">
+      </div>
+      <div class="info">
+        <h3 title="${esc(p.name)}">${esc(p.name)}</h3>
+        <div class="brand">${esc(p.brand || p.category)}</div>
+        <div class="score" title="Cosine similarity. For CLIP, good matches usually score 0.25 to 0.35.">similarity ${p.score.toFixed(2)}</div>
+        <button class="more" type="button" data-row="${p.row}">More like this</button>
+      </div>
+    </li>`).join("");
+}
+
+function fail(e){
+  console.error(e);
+  grid.classList.remove("scanning");
+  head("Search did not finish");
+  grid.innerHTML = `<li class="msg err">${esc(e.message || "Something went wrong. Reload the page and try again.")}</li>`;
+}
+
+async function randomShelf(){
+  try {
+    const info = await E.infoP, n = info.index.n, rows = new Set();
+    const shard = Math.floor(Math.random() * Math.ceil(n / info.shard));
+    while (rows.size < 18) rows.add(Math.min(n - 1, shard * info.shard + Math.floor(Math.random() * info.shard)));
+    const metas = await E.meta([...rows]);
+    if (!grid.classList.contains("wall")) return;   // a search already replaced the shelf
+    grid.innerHTML = metas.map(([path, name]) => `<li class="tile"><div class="ph">
+      <img src="${esc(info.image_base + path)}" alt="${esc(name)}" title="${esc(name)}" loading="lazy" onerror="this.closest('li').remove()"></div></li>`).join("");
+  } catch (e) { console.warn(e); }
+}
+
+function setPhotoMode(on){
+  cam.setAttribute("aria-pressed", on);
+  drop.classList.toggle("on", on);
+  if (on) drop.focus();
+}
+cam.onclick = () => setPhotoMode(cam.getAttribute("aria-pressed") !== "true");
+
+async function searchText(text){
+  text = text.trim(); if (!text) { q.focus(); return; }
+  q.value = text; fitQuery(); setPhotoMode(false);
+  history.replaceState(null, "", "?q=" + encodeURIComponent(text));
+  const title = `Matches for “${esc(text)}”`;
+  scanning(title);
+  try { render(await E.textSearch(text, K), title); } catch (e) { fail(e); }
+}
+
+async function searchPhoto(f){
+  if (!f || !f.type.startsWith("image/")) { fail(new Error("That file is not an image. Choose a JPG or PNG.")); return; }
+  if (f.size > 10 * 2**20) { fail(new Error("That image is larger than 10 MB. Choose a smaller photo.")); return; }
+  const img = $("#preview"); img.src = URL.createObjectURL(f); img.classList.add("has");
+  const title = "Products that look like your photo";
+  scanning(title);
+  try {
+    await img.decode().catch(() => { throw new Error("Could not read that file as an image. Use a JPG or PNG."); });
+    render(await E.photoSearch(img, K), title);
+  } catch (e) { fail(e); }
+}
+
+async function moreLike(row){
+  const top = $(".search").offsetTop + $(".search").offsetHeight - 10;
+  window.scrollTo({top, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
+  scanning("Finding similar products");
+  try {
+    const d = await E.similar(row, K);
+    render(d, `<img src="${esc(d.source.image_url)}" alt="">Looks like “${esc(d.source.name.slice(0, 60))}”`);
+  } catch (e) { fail(e); }
+}
+
+function fitQuery(){   // long queries shrink so the whole sentence stays visible
+  const n = q.value.length || q.placeholder.length;
+  q.style.fontSize = n > 34 ? "clamp(24px,3.4vw,42px)" : n > 22 ? "clamp(28px,4.6vw,56px)" : "";
+}
+q.addEventListener("input", fitQuery);
+$("#qform").onsubmit = e => { e.preventDefault(); searchText(q.value); };
+$("#tries").onclick = e => { const b = e.target.closest("button"); if (b) searchText(b.textContent); };
+grid.onclick = e => { const b = e.target.closest(".more"); if (b) moreLike(+b.dataset.row); };
+file.onchange = () => searchPhoto(file.files[0]);
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); file.click(); } };
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => searchPhoto(e.dataTransfer.files[0]));
+window.addEventListener("paste", e => {
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith("image/"));
+  if (item) { setPhotoMode(true); searchPhoto(item.getAsFile()); }
+});
+
+const start = new URLSearchParams(location.search).get("q");
+if (start) searchText(start); else randomShelf();
+</script>
+</body>
+</html>
